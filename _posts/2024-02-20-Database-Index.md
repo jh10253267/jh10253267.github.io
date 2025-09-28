@@ -146,5 +146,55 @@ type은 ALL, index, const, ref, range가 있다.
 유니크한 컬럼을 기준으론 사용자가 생성하지 않아도 인덱스가 생성되는데 내부에 균형트리가 만들어진다. 위에서 살펴본대로 클러스터 인덱스를 기준으로 정렬되고 인덱스 테이블에 이미 값이 존재하여  
 이론상은 logN의 시간복잡도지만 리프에 데이터를 포함하고 있어 굉장히 빠른 속도로 데이터를 찾을 수 있다.(일반 인덱스는 균형트리에 접근하여 위치를 알아내고 실제 페이지에 접근하여 데이터를 조회한다.)  
 * range는 범위 검색을 했을 때 나오는 타입이다. 예를 들면 between이라던가 <=와 같은 연산자를 사용하면 인덱스 테이블을 범위를 정하여 스캔하고 실제 데이터에 접근해서 읽어온다.  
-ref는 비고유 인덱스를 사용하는 경우 나타난다. 예를 들어 사람의 이름은 중복이 가능하다. 서울 사는 홍길동이 있을거고 부산에 사는 홍길동이 있을 것이다. 이 때 이름을 기준으로 검색하면  
+* ref는 비고유 인덱스를 사용하는 경우 나타난다. 예를 들어 사람의 이름은 중복이 가능하다. 서울 사는 홍길동이 있을거고 부산에 사는 홍길동이 있을 것이다. 이 때 이름을 기준으로 검색하면  
 범위 인덱스를 통해 접근하고 보통 1행 이상의 행이 조회된다.  
+
+
+그럼 실제로 인덱스를 적용해보고 인덱스를 활용할 수 있는 쿼리가 얼마나 빨라질 수 있는지 직접 해보자.
+
+```sql
+DROP TABLE IF EXISTS users; # 기존 테이블 삭제
+
+CREATE TABLE users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100),
+    age INT
+);
+```
+
+```sql
+-- 높은 재귀(반복) 횟수를 허용하도록 설정
+-- (아래에서 생성할 더미 데이터의 개수와 맞춰서 작성하면 된다.)
+SET SESSION cte_max_recursion_depth = 1000000; 
+-- SET SESSION max_recursive_iterations = 1000000; mariadb
+
+-- 더미 데이터 삽입 쿼리
+INSERT INTO users (name, age)
+WITH RECURSIVE cte (n) AS
+(
+  SELECT 1
+  UNION ALL
+  SELECT n + 1 FROM cte WHERE n < 1000000 -- 생성하고 싶은 더미 데이터의 개수
+)
+SELECT 
+    CONCAT('User', LPAD(n, 7, '0')),   -- 'User' 다음에 7자리 숫자로 구성된 이름 생성
+    FLOOR(1 + RAND() * 1000) AS age    -- 1부터 1000 사이의 랜덤 값으로 나이 생성
+FROM cte;
+
+-- 잘 생성됐는 지 확인
+SELECT COUNT(*) FROM users;
+```
+
+이렇게 실행하면 1000000건의 더미데이터가 생성된다.
+```sql
+SELECT * FROM users
+WHERE age = 23;
+```
+조회 결과는 1049개가 나오고 속도는 약 130ms가 나온다.  
+
+이제 age를 빠르게 찾을 수 있도록 인덱스를 적용해보자.
+```sql
+CREATE INDEX idx_age on users(age);
+```
+평균 속도는 33ms까지 단축되었다.
+
